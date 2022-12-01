@@ -10,6 +10,8 @@
             app:key="document_provider"
             app:summary="@string/open_data_directory_summary"
             app:title="@string/open_data_directory" />
+        <emu.skyline.preference.UserDataPreference
+            app:title="User Data Sync State" />
         <emu.skyline.preference.ThemePreference
             android:defaultValue="2"
             android:entries="@array/app_theme"

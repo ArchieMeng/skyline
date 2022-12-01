@@ -32,6 +32,7 @@ import emu.skyline.utils.ByteBufferSerializable
 import emu.skyline.utils.GpuDriverHelper
 import emu.skyline.utils.NativeSettings
 import emu.skyline.utils.PreferenceSettings
+import emu.skyline.utils.UserDataManager
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.FutureTask
@@ -202,6 +203,30 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
         emulationThread!!.start()
     }
 
+    /**
+     * @note This should only be called after [surfaceCreated] to ensure a valid surface is available
+     */
+    private fun startEmulation() {
+        val run = {
+            executeApplication(intent!!, binding.gameView.holder.surface)
+            UserDataManager.notifyGameLaunched()
+        }
+
+        if (UserDataManager.currentState == UserDataManager.State.Ready) {
+            run()
+        } else {
+            UserDataManager.addOnStateChangedListener(this, object : UserDataManager.Callback {
+                override fun onStateChanged(state : UserDataManager.State) {
+                    if (state == UserDataManager.State.Ready) {
+                        run()
+                        UserDataManager.removeOnStateChangedListener(this)
+                    }
+                }
+            })
+        }
+    }
+
+
     override fun onBackPressed() {
         returnFromEmulation()
     }
@@ -330,7 +355,7 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
         // Note: We need FRAME_RATE_COMPATIBILITY_FIXED_SOURCE as there will be a degradation of user experience with FRAME_RATE_COMPATIBILITY_DEFAULT due to game speed alterations when the frame rate doesn't match the display refresh rate
             holder.surface.setFrameRate(desiredRefreshRate, if (preferenceSettings.maxRefreshRate) Surface.FRAME_RATE_COMPATIBILITY_DEFAULT else Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
 
-        executeApplication(intent!!, holder.surface)
+        startEmulation()
     }
 
     /**

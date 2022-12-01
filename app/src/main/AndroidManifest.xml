@@ -104,6 +104,15 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".utils.UserDataQueryBroadcastReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="skyline.intent.action.QUERY_USER_DATA" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name=".provider.DocumentsProvider"
             android:authorities="${applicationId}.provider"
@@ -119,4 +128,10 @@
             android:name="com.android.graphics.injectLayers.enable"
             android:value="true" />
     </application>
+
+    <queries>
+        <intent>
+            <action android:name="skyline.intent.action.QUERY_USER_DATA" />
+        </intent>
+    </queries>
 </manifest>
