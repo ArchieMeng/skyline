@@ -87,13 +87,14 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
      * @param romUri The URI of the ROM as a string, used to print out in the logs
      * @param romType The type of the ROM as an enum value
      * @param romFd The file descriptor of the ROM object
+     * @param surface The surface to render to
      * @param nativeSettings The settings to be used by libskyline
      * @param publicAppFilesPath The full path to the public app files directory
      * @param privateAppFilesPath The full path to the private app files directory
      * @param nativeLibraryPath The full path to the app native library directory
      * @param assetManager The asset manager used for accessing app assets
      */
-    private external fun executeApplication(romUri : String, romType : Int, romFd : Int, nativeSettings : NativeSettings, publicAppFilesPath : String, privateAppFilesPath : String, nativeLibraryPath : String, assetManager : AssetManager)
+    private external fun executeApplication(romUri : String, romType : Int, romFd : Int, surface : Surface, nativeSettings : NativeSettings, publicAppFilesPath : String, privateAppFilesPath : String, nativeLibraryPath : String, assetManager : AssetManager)
 
     /**
      * @param join If the function should only return after all the threads join or immediately
@@ -170,7 +171,7 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
     /**
      * @note Any caller has to handle the application potentially being restarted with the supplied intent
      */
-    private fun executeApplication(intent : Intent) {
+    private fun executeApplication(intent : Intent, surface : Surface) {
         if (emulationThread?.isAlive == true) {
             shouldFinish = false
             if (stopEmulation(false))
@@ -194,7 +195,7 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
 
         GpuDriverHelper.ensureFileRedirectDir(this)
         emulationThread = Thread {
-            executeApplication(rom.toString(), romType, romFd.detachFd(), NativeSettings(this, preferenceSettings), applicationContext.getPublicFilesDir().canonicalPath + "/", applicationContext.filesDir.canonicalPath + "/", applicationInfo.nativeLibraryDir + "/", assets)
+            executeApplication(rom.toString(), romType, romFd.detachFd(), surface, NativeSettings(this, preferenceSettings), applicationContext.getPublicFilesDir().canonicalPath + "/", applicationContext.filesDir.canonicalPath + "/", applicationInfo.nativeLibraryDir + "/", assets)
             returnFromEmulation()
         }
 
@@ -229,6 +230,7 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
             binding.onScreenControllerToggle.setOnApplyWindowInsetsListener(insetsOrMarginHandler)
         }
 
+        // Emulation will start after the surface is created to ensure a valid surface
         binding.gameView.holder.addCallback(this)
 
         binding.gameView.setAspectRatio(
@@ -272,8 +274,6 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
             isGone = binding.onScreenControllerView.isGone
             setOnClickListener { binding.onScreenControllerView.isInvisible = !binding.onScreenControllerView.isInvisible }
         }
-
-        executeApplication(intent!!)
     }
 
     override fun onPause() {
@@ -305,7 +305,8 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
         super.onNewIntent(intent!!)
         if (getIntent().data != intent.data) {
             setIntent(intent)
-            executeApplication(intent)
+            // It is assumed that a surface is already available here
+            executeApplication(intent, binding.gameView.holder.surface!!)
         }
     }
 
@@ -329,9 +330,7 @@ class EmulationActivity : AppCompatActivity(), SurfaceHolder.Callback, View.OnTo
         // Note: We need FRAME_RATE_COMPATIBILITY_FIXED_SOURCE as there will be a degradation of user experience with FRAME_RATE_COMPATIBILITY_DEFAULT due to game speed alterations when the frame rate doesn't match the display refresh rate
             holder.surface.setFrameRate(desiredRefreshRate, if (preferenceSettings.maxRefreshRate) Surface.FRAME_RATE_COMPATIBILITY_DEFAULT else Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
 
-        while (emulationThread!!.isAlive)
-            if (setSurface(holder.surface))
-                return
+        executeApplication(intent!!, holder.surface)
     }
 
     /**

@@ -71,6 +71,7 @@ extern "C" JNIEXPORT void Java_emu_skyline_EmulationActivity_executeApplication(
     jstring romUriJstring,
     jint romType,
     jint romFd,
+    jobject surface,
     jobject settingsInstance,
     jstring publicAppFilesPathJstring,
     jstring privateAppFilesPathJstring,
@@ -111,6 +112,8 @@ extern "C" JNIEXPORT void Java_emu_skyline_EmulationActivity_executeApplication(
             GetTimeZoneName(),
             std::make_shared<skyline::vfs::AndroidAssetFileSystem>(AAssetManager_fromJava(env, assetManager))
         )};
+        os->state.gpu->presentation.UpdateSurface(surface);
+
         OsWeak = os;
         GpuWeak = os->state.gpu;
         AudioWeak = os->state.audio;
