@@ -11,7 +11,7 @@ import android.util.AttributeSet
 import androidx.lifecycle.LifecycleOwner
 import androidx.preference.Preference
 import androidx.preference.R
-import emu.skyline.utils.UserDataManager
+import emu.skyline.UserDataManager
 
 /**
  * This preference is used to check the status of user data by querying [UserDataManager]

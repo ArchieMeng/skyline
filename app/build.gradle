@@ -172,6 +172,7 @@ dependencies {
 
     /* Other Java */
     implementation 'info.debatty:java-string-similarity:2.0.0'
+    implementation 'com.lazygeniouz:documentfile_compat:0.8'
 }
 
 kapt {

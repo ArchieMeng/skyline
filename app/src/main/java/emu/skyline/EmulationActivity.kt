@@ -32,7 +32,6 @@ import emu.skyline.utils.ByteBufferSerializable
 import emu.skyline.utils.GpuDriverHelper
 import emu.skyline.utils.NativeSettings
 import emu.skyline.utils.PreferenceSettings
-import emu.skyline.utils.UserDataManager
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.FutureTask

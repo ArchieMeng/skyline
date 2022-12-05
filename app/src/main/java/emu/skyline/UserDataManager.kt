@@ -5,53 +5,35 @@
 
 @file:OptIn(DelicateCoroutinesApi::class)
 
-package emu.skyline.utils
+package emu.skyline
 
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Binder
 import android.os.Build
-import android.os.Bundle
-import android.os.Parcel
 import android.os.ParcelFileDescriptor
-import android.os.Parcelable
 import android.util.Log
-import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
-import emu.skyline.SkylineApplication
-import emu.skyline.getPublicFilesDir
+import emu.skyline.utils.fileDelegate
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 /**
- * Name of the action used to sync user data with other Skyline installations
+ * Name of the action used to discover other Skyline installs for syncing user data
  * @note This *must* match the action in the manifest
  */
-private const val ActionQueryUserData = "skyline.intent.action.QUERY_USER_DATA"
-
-/**
- * Extras returned by a user data query performed by [UserDataManager]
- */
-private const val ExtraUserDataVersion = "skyline.intent.extra.USER_DATA_VERSION"
-private const val ExtraUserDataTimestamp = "skyline.intent.extra.USER_DATA_TIMESTAMP"
-private const val ExtraUserDataFdBinder = "skyline.intent.extra.USER_DATA_FD_BINDER"
-
-private const val TransactionGetPublicFilesDir = Binder.FIRST_CALL_TRANSACTION
-private const val TransactionGetInternalFilesDir = Binder.FIRST_CALL_TRANSACTION + 1
+private const val ActionGetUserData = "skyline.intent.action.GET_USER_DATA"
 
 /**
  * The maximum version of the user data that [UserDataManager] can handle
@@ -67,7 +49,7 @@ private const val MaxUserDataVersion = 1
 object UserDataManager {
     private val Tag = UserDataManager::class.java.simpleName
 
-    private const val UserDataMetaDir = ".skyline"
+    private const val UserDataMetaDir = ".user_data"
     private const val TimestampFileName = "last"
     private const val UserDataVersionFileName = "version"
 
@@ -98,23 +80,9 @@ object UserDataManager {
 
     private val callbacks : MutableSet<Callback> = ConcurrentHashMap.newKeySet()
 
-    private var version : Int
-        get() = versionFile.inputStream().use {
-            String(it.readBytes()).toInt()
-        }
-        set(version) = versionFile.outputStream().use {
-            Log.v(Tag, "Writing version $version to $versionFile")
-            it.write(version.toString().toByteArray())
-        }
+    private var version by fileDelegate<Int>(versionFile)
 
-    private var timestamp : Long
-        get() = timestampFile.inputStream().use {
-            String(it.readBytes()).toLong()
-        }
-        set(timestamp) = timestampFile.outputStream().use {
-            Log.v(Tag, "Writing timestamp $timestamp to $timestampFile")
-            it.write(timestamp.toString().toByteArray())
-        }
+    private var timestamp by fileDelegate<Long>(timestampFile)
 
     /**
      * Initialises the metadata folder to default values
@@ -210,67 +178,45 @@ object UserDataManager {
      * @return The file descriptor of the most recent user data, or `null` if no user data was found
      */
     private suspend fun querySkylineInstalls() : ParcelFileDescriptor? {
-        val intent = Intent(ActionQueryUserData)
+        val intent = Intent(ActionGetUserData)
         val packageManager = appContext.packageManager
 
-        val receivers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryBroadcastReceivers(intent, PackageManager.ResolveInfoFlags.of(0))
+        val providers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentContentProviders(intent, PackageManager.ResolveInfoFlags.of(0))
         } else {
             @Suppress("DEPRECATION")
-            packageManager.queryBroadcastReceivers(intent, 0)
+            packageManager.queryIntentContentProviders(intent, 0)
         }
 
-        Log.d(Tag, "Found ${receivers.size - 1} receivers: " + receivers.joinToString { it.activityInfo.packageName })
+        Log.d(Tag, "Found ${providers.size - 1} receivers: " + providers.joinToString { it.activityInfo.packageName })
 
         val currentVersion = version
         var finalVersion = currentVersion
         var maxTimestamp = timestamp
         var selectedPackageName : String? = null
-        var fd : ParcelFileDescriptor? = null
 
         // Find where the most recent user data is
-        for (receiverInfo in receivers) {
+        for (providerInfo in providers) {
             // Skip our own package
-            if (receiverInfo.activityInfo.packageName == appContext.packageName)
+            if (providerInfo.activityInfo.packageName == appContext.packageName)
                 continue
 
             // Create an explicit copy of the intent
             val explicitIntent = Intent(intent).apply {
-                component = ComponentName(receiverInfo.activityInfo.packageName, receiverInfo.activityInfo.name)
+                component = ComponentName(providerInfo.activityInfo.packageName, providerInfo.activityInfo.name)
             }
 
             // Query this receiver and suspend execution to wait for the result
-            val (queryResult : Bundle, queriedFd : ParcelFileDescriptor?) = suspendCoroutine { continuation ->
+            val queryResult = suspendCoroutine { continuation ->
                 val queryBroadcastReceiver = object : BroadcastReceiver() {
                     override fun onReceive(context : Context, intent : Intent) {
                         val extras = getResultExtras(true)
-
-                        // Perform IPC to retrieve the file descriptor
-                        val parcelFileDescriptor = extras.getBinder(ExtraUserDataFdBinder)?.let { binder ->
-                            val reply = Parcel.obtain()
-
-                            if (!binder.transact(TransactionGetPublicFilesDir, Parcel.obtain(), reply, 0))
-                                return@let null
-
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                reply.readParcelable(ParcelFileDescriptor::class.java.classLoader, ParcelFileDescriptor::class.java)
-                            } else {
-                                @Suppress("DEPRECATION")
-                                reply.readParcelable(ParcelFileDescriptor::class.java.classLoader)
-                            }
-                        }
-
-
-                        continuation.resume(Pair(extras, parcelFileDescriptor))
+                        continuation.resume(extras)
                     }
                 }
-
-                // TODO: find a way to avoid executing the result receiver on the main thread
-                appContext.sendOrderedBroadcast(explicitIntent, null, queryBroadcastReceiver, null, 0, null, null)
             }
-            Log.d(Tag, "Received query result from ${receiverInfo.activityInfo.packageName}")
+            Log.d(Tag, "Received query result from ${providerInfo.activityInfo.packageName}")
             Log.v(Tag, "Query result: $queryResult")
-            Log.v(Tag, "fd: $queriedFd, valid: ${queriedFd?.fileDescriptor?.valid()}")
 
             // Skip if the other installation has a newer version
             val queriedVersion = queryResult.getInt(ExtraUserDataVersion, 0)
@@ -282,10 +228,7 @@ object UserDataManager {
             if (queriedTimestamp > maxTimestamp) {
                 maxTimestamp = queriedTimestamp
                 finalVersion = queriedVersion
-                fd = queriedFd
-                selectedPackageName = receiverInfo.activityInfo.packageName
-            } else {
-                queriedFd?.close()
+                selectedPackageName = providerInfo.activityInfo.packageName
             }
         }
 
@@ -297,7 +240,7 @@ object UserDataManager {
             "$it has the newest user data"
         } ?: "No other Skyline installation has newer user data")
 
-        return fd
+        return null
     }
 
     /**
@@ -305,57 +248,5 @@ object UserDataManager {
      */
     private fun syncPublicFilesDir(parcelFileDescriptor : ParcelFileDescriptor) {
         val out = File(appContext.getPublicFilesDir(), "sync")
-    }
-
-    /**
-     * Returns user data information packed into a [Bundle]
-     * @return A [Bundle] containing the user data information, and a Binder to retrieve a file descriptor to the user data
-     */
-    fun getQueryResultBundle(context : Context) : Bundle {
-        // Create a Binder that will be used to transfer the file descriptor
-        val binder = object : Binder() {
-            override fun onTransact(code : Int, data : Parcel, reply : Parcel?, flags : Int) : Boolean {
-                if (reply == null)
-                    return false
-
-                val dir = when (code) {
-                    TransactionGetPublicFilesDir -> {
-                        context.getPublicFilesDir().toUri()
-                    }
-
-                    TransactionGetInternalFilesDir -> {
-                        context.filesDir.toUri()
-                    }
-
-                    else -> return false
-                }
-
-                val parcelFileDescriptor = context.contentResolver.openFileDescriptor(dir, "r")!!
-                reply.writeParcelable(parcelFileDescriptor, Parcelable.PARCELABLE_WRITE_RETURN_VALUE)
-                return true
-            }
-        }
-
-        return Bundle().apply {
-            putInt(ExtraUserDataVersion, version)
-            putLong(ExtraUserDataTimestamp, timestamp)
-            putBinder(ExtraUserDataFdBinder, binder)
-        }
-    }
-}
-
-/**
- * Manifest-registered receiver that replies to user data queries
- */
-class UserDataQueryBroadcastReceiver : BroadcastReceiver() {
-    /**
-     * Returns a FD of the `files` directory of the app, and metadata about the user data
-     */
-    override fun onReceive(context : Context, intent : Intent) {
-        if (intent.action != ActionQueryUserData)
-            return
-
-        // TODO: look into process lifetime and Binder
-        setResultExtras(UserDataManager.getQueryResultBundle(context))
     }
 }

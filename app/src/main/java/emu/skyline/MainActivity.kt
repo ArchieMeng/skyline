@@ -37,7 +37,6 @@ import emu.skyline.loader.LoaderResult
 import emu.skyline.loader.RomFormat
 import emu.skyline.provider.DocumentsProvider
 import emu.skyline.utils.PreferenceSettings
-import emu.skyline.utils.UserDataManager
 import emu.skyline.utils.WindowInsetsHelper
 import javax.inject.Inject
 import kotlin.math.ceil
